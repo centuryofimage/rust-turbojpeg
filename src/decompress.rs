@@ -171,9 +171,10 @@ impl Decompressor {
     /// the output is usable. Fatal errors are still returned as errors.
     ///
     /// libjpeg reports only the first warning of each call, so later warnings in the same data are
-    /// not visible. TurboJPEG also reports a fatal error that follows a warning as a warning; the
-    /// message is then the fatal error's, and the output may be incomplete. Callers that accept
-    /// only specific warning messages are unaffected.
+    /// not visible. TurboJPEG also reports a fatal error that follows a warning as a warning, with
+    /// the fatal error's message. `read_header()` detects this because no header was read, but the
+    /// decompression functions then succeed with incomplete output. Callers that accept only
+    /// libjpeg's warning messages are unaffected.
     ///
     /// # Example
     ///
@@ -250,8 +251,14 @@ impl Decompressor {
             raw::tj3DecompressHeader(handle.as_ptr(), jpeg_data.as_ptr(), jpeg_data_len)
         })?;
 
-        let width = self.handle.get(raw::TJPARAM_TJPARAM_JPEGWIDTH)
-            .try_into().map_err(|_| Error::IntegerOverflow("width"))?;
+        let width = self.handle.get(raw::TJPARAM_TJPARAM_JPEGWIDTH);
+        // A fatal error after an accepted warning leaves no header, and its message in the warning.
+        if width <= 0 {
+            if let Some(message) = self.warning.take() {
+                return Err(Error::TurboJpegError(message))
+            }
+        }
+        let width = width.try_into().map_err(|_| Error::IntegerOverflow("width"))?;
         let height = self.handle.get(raw::TJPARAM_TJPARAM_JPEGHEIGHT)
             .try_into().map_err(|_| Error::IntegerOverflow("height"))?;
         let subsamp = Subsamp::from_int(self.handle.get(raw::TJPARAM_TJPARAM_SUBSAMP))?;
